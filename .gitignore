@@ -1,0 +1,45 @@
+# Python virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter / IPython
+.ipynb_checkpoints/
+
+# IDE settings
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Generated outputs
+outputs/
+
+# Extracted video frames
+data/frames/
+
+# Keep source code and datasets tracked
+!src/
+!data/
+!models/
+!outputs/
+!data/videos/
+!data/videos/frames/
