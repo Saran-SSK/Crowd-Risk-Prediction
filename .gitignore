@@ -36,10 +36,5 @@ outputs/
 # Extracted video frames
 data/frames/
 
-# Keep source code and datasets tracked
-!src/
-!data/
-!models/
-!outputs/
-!data/videos/
-!data/videos/frames/
+# Local videos
+data/videos/
