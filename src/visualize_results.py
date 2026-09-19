@@ -1,6 +1,8 @@
 import os
+import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import cv2
 
 # ==============================
 # Paths
@@ -480,3 +482,206 @@ plt.show()
 print()
 print("Average density change visualization generated successfully!")
 print(f"Saved to: {regional_density_trend_path}")
+
+
+# ==============================
+# NEW VISUALIZATION 1: Risk Distribution
+# ==============================
+
+plt.figure(figsize=(10, 6))
+
+# Get all risk scores from the dataframe
+all_risk_scores = df["risk_score"].values
+
+# Create histogram
+plt.hist(all_risk_scores, bins=30, edgecolor='black', alpha=0.7, color='steelblue')
+
+# Add threshold lines (from risk_assessment.py: LOW < 0.30, MEDIUM < 0.60, HIGH >= 0.60)
+plt.axvline(x=0.30, color='orange', linestyle='--', linewidth=2, label='LOW/MEDIUM threshold (0.30)')
+plt.axvline(x=0.60, color='red', linestyle='--', linewidth=2, label='MEDIUM/HIGH threshold (0.60)')
+
+# Add count annotations
+low_count = (all_risk_scores < 0.30).sum()
+medium_count = ((all_risk_scores >= 0.30) & (all_risk_scores < 0.60)).sum()
+high_count = (all_risk_scores >= 0.60).sum()
+
+plt.text(0.02, 0.95, f'LOW: {low_count}', transform=plt.gca().transAxes, 
+         bbox=dict(boxstyle='round', facecolor='lightgreen', alpha=0.7))
+plt.text(0.35, 0.95, f'MEDIUM: {medium_count}', transform=plt.gca().transAxes,
+         bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+plt.text(0.70, 0.95, f'HIGH: {high_count}', transform=plt.gca().transAxes,
+         bbox=dict(boxstyle='round', facecolor='lightcoral', alpha=0.7))
+
+plt.xlabel('Risk Score')
+plt.ylabel('Frequency')
+plt.title('Distribution of Risk Scores Across All Regions and Frames')
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+
+risk_distribution_path = os.path.join(OUTPUT_FOLDER, "risk_distribution.png")
+plt.savefig(risk_distribution_path, dpi=300, bbox_inches="tight")
+plt.show()
+
+print()
+print("Risk Distribution visualization generated successfully!")
+print(f"Saved to: {risk_distribution_path}")
+
+
+# ==============================
+# NEW VISUALIZATION 2: 3×3 Regional Visualization
+# ==============================
+
+# Get the most recent frame's regional data for the 3x3 visualization
+most_recent_frame = df["frame"].iloc[-1]
+recent_frame_data = df[df["frame"] == most_recent_frame].copy()
+
+# Create a 3x3 grid visualization
+fig, ax = plt.subplots(figsize=(10, 8))
+
+# Create a 3x3 array of risk scores for heatmap
+risk_grid = np.zeros((3, 3))
+risk_level_grid = np.empty((3, 3), dtype=object)
+
+for region_data in recent_frame_data.itertuples():
+    region_id = region_data.region_id
+    row = int(region_id.split("_")[0][1])
+    col = int(region_id.split("_")[1][1])
+    risk_grid[row, col] = region_data.risk_score
+    risk_level_grid[row, col] = region_data.risk_level
+
+# Create colormap based on risk levels
+risk_colors = {"LOW": "#2ecc71", "MEDIUM": "#f1c40f", "HIGH": "#e74c3c"}
+color_grid = np.array([[risk_colors[risk_level_grid[row, col]] for col in range(3)] for row in range(3)])
+
+# Display the grid
+table = ax.table(cellText=[[f"{risk_level_grid[row, col]}\n({risk_grid[row, col]:.3f})" 
+                            for col in range(3)] for row in range(3)],
+                 rowLabels=["Row 0", "Row 1", "Row 2"],
+                 colLabels=["Col 0", "Col 1", "Col 2"],
+                 cellLoc='center',
+                 loc='center',
+                 cellColours=color_grid)
+
+table.auto_set_font_size(False)
+table.set_fontsize(10)
+table.scale(1.5, 2)
+
+# Style the table
+for i in range(3):
+    for j in range(3):
+        cell = table[(i+1, j)]
+        cell.set_facecolor(color_grid[i, j])
+        if risk_level_grid[i, j] == "HIGH":
+            cell.set_text_props(weight='bold', color='white')
+        elif risk_level_grid[i, j] == "MEDIUM":
+            cell.set_text_props(weight='bold', color='black')
+        else:
+            cell.set_text_props(weight='bold', color='black')
+
+ax.axis('off')
+plt.title(f'3×3 Regional Risk Visualization\nFrame: {most_recent_frame}', fontsize=14, fontweight='bold')
+plt.tight_layout()
+
+regional_3x3_path = os.path.join(OUTPUT_FOLDER, "regional_3x3_visualization.png")
+plt.savefig(regional_3x3_path, dpi=300, bbox_inches="tight")
+plt.show()
+
+print()
+print("3×3 Regional Visualization generated successfully!")
+print(f"Saved to: {regional_3x3_path}")
+
+
+# ==============================
+# NEW VISUALIZATION 3: CSRNet Density-Map Output
+# ==============================
+
+# Load the actual density map from the existing output
+density_map_path = "outputs/density_maps/frame_0000_density.png"
+
+if os.path.exists(density_map_path):
+    density_img = cv2.imread(density_map_path)
+    density_img_rgb = cv2.cvtColor(density_img, cv2.COLOR_BGR2RGB)
+    
+    plt.figure(figsize=(12, 8))
+    plt.imshow(density_img_rgb)
+    plt.title('CSRNet Density Map Output (Frame 0000)', fontsize=14, fontweight='bold')
+    plt.xlabel('Width (pixels)')
+    plt.ylabel('Height (pixels)')
+    plt.colorbar(label='Density Magnitude')
+    plt.tight_layout()
+    
+    csrnet_density_path = os.path.join(OUTPUT_FOLDER, "csrnet_density_map.png")
+    plt.savefig(csrnet_density_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    
+    print()
+    print("CSRNet Density Map visualization generated successfully!")
+    print(f"Saved to: {csrnet_density_path}")
+else:
+    print()
+    print(f"Warning: Density map not found at {density_map_path}")
+    print("CSRNet Density Map visualization skipped.")
+
+
+# ==============================
+# NEW VISUALIZATION 4: Farneback Optical-Flow Output
+# ==============================
+
+# Load the actual optical flow map from the existing output
+flow_map_path = "outputs/flow_maps/frame_0000_flow.png"
+
+if os.path.exists(flow_map_path):
+    flow_img = cv2.imread(flow_map_path)
+    flow_img_rgb = cv2.cvtColor(flow_img, cv2.COLOR_BGR2RGB)
+    
+    plt.figure(figsize=(12, 8))
+    plt.imshow(flow_img_rgb)
+    plt.title('Farneback Optical Flow Output (Frame 0000)', fontsize=14, fontweight='bold')
+    plt.xlabel('Width (pixels)')
+    plt.ylabel('Height (pixels)')
+    plt.colorbar(label='Flow Magnitude')
+    plt.tight_layout()
+    
+    farneback_flow_path = os.path.join(OUTPUT_FOLDER, "farneback_optical_flow.png")
+    plt.savefig(farneback_flow_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    
+    print()
+    print("Farneback Optical Flow visualization generated successfully!")
+    print(f"Saved to: {farneback_flow_path}")
+else:
+    print()
+    print(f"Warning: Flow map not found at {flow_map_path}")
+    print("Farneback Optical Flow visualization skipped.")
+
+
+# ==============================
+# NEW VISUALIZATION 5: Annotated Final Output Frame
+# ==============================
+
+# Load an actual final annotated frame from the existing output
+final_frame_path = "outputs/final_frames/frame_0000.jpg"
+
+if os.path.exists(final_frame_path):
+    final_frame = cv2.imread(final_frame_path)
+    final_frame_rgb = cv2.cvtColor(final_frame, cv2.COLOR_BGR2RGB)
+    
+    plt.figure(figsize=(14, 10))
+    plt.imshow(final_frame_rgb)
+    plt.title('Annotated Final Output Frame (Frame 0000)', fontsize=14, fontweight='bold')
+    plt.xlabel('Width (pixels)')
+    plt.ylabel('Height (pixels)')
+    plt.tight_layout()
+    
+    annotated_frame_path = os.path.join(OUTPUT_FOLDER, "annotated_final_output.png")
+    plt.savefig(annotated_frame_path, dpi=300, bbox_inches="tight")
+    plt.show()
+    
+    print()
+    print("Annotated Final Output Frame visualization generated successfully!")
+    print(f"Saved to: {annotated_frame_path}")
+else:
+    print()
+    print(f"Warning: Final frame not found at {final_frame_path}")
+    print("Annotated Final Output Frame visualization skipped.")

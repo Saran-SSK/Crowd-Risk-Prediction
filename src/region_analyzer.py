@@ -247,12 +247,13 @@ class RegionAnalyzer:
             # Calculate density change
             density_change = current_density - previous_density
             
-            # Calculate density change ratio (handle division by zero)
-            if previous_density > 0:
-                density_change_ratio = density_change / previous_density
+            # Calculate density change ratio safely (prevent division by zero and Inf)
+            # A safe epsilon prevents numerical instability if previous density is near zero
+            eps_density = 1e-6
+            if previous_density > eps_density:
+                density_change_ratio = float(density_change / previous_density)
             else:
-                # If previous density was zero, ratio is undefined (set to 0 or handle specially)
-                density_change_ratio = 0.0 if current_density == 0 else float('inf')
+                density_change_ratio = 0.0
             
             # Store the change statistics
             change_info = {
@@ -272,37 +273,36 @@ class RegionAnalyzer:
 
     def analyze_convergence(self, flow_x, flow_y):
         """
-        Analyze crowd convergence by measuring how strongly motion vectors point toward region centers.
+        Analyze crowd convergence by measuring magnitude-weighted net inward optical flow.
         
-        This method takes optical flow vector components and calculates a convergence score for each
-        region. The convergence score measures how strongly the motion in a region is directed toward
-        the center of that region, which can indicate crowd gathering or potential bottlenecks.
+        MATHEMATICAL DEFINITION:
+        For each pixel i in the region:
+          - u_i is the unit vector pointing from pixel (y_i, x_i) toward the region center (c_y, c_x).
+          - v_i = (flow_x_i, flow_y_i) is the optical flow vector with magnitude |v_i|.
+          - projection_i = dot(v_i, u_i) is the flow component directed toward the center.
         
-        The method uses cosine similarity between the optical flow vector at each pixel and the
-        inward direction vector (from pixel to region center). Positive similarity values indicate
-        inward motion, while negative values indicate outward motion.
+        The magnitude-weighted net inward flux across all N pixels in the region is:
+          net_inward = sum(projection_i) / (sum(|v_i|) + epsilon)
+        
+        The convergence score C is defined as:
+          C = clip(max(0.0, net_inward), 0.0, 1.0)
+        
+        ENGINEERING PROPERTIES:
+        - Zero flow: sum(|v_i|) < epsilon -> C = 0.0
+        - Pure inward flow (gathering): C -> 1.0
+        - Pure outward flow (dispersal): net_inward < 0 -> C = 0.0
+        - Uniform directional flow: opposite halves cancel out -> C ≈ 0.0
+        - Random / mixed flow: expected to have low net inward convergence -> C ≈ 0.0
+        
+        This formulation avoids the mathematical artifact of positive-only cosine averaging,
+        which previously produced an artificial ~0.637 baseline across all regions.
         
         Args:
             flow_x (np.ndarray): Horizontal optical flow component. Shape (H, W).
             flow_y (np.ndarray): Vertical optical flow component. Shape (H, W).
         
         Returns:
-            list: A list of dictionaries, where each dictionary contains convergence statistics
-                  for one region. Each dictionary has the following keys:
-                  - region_id (str): Unique identifier for the region (e.g., "R0_C0")
-                  - row (int): Row index of the region (0 to rows-1)
-                  - column (int): Column index of the region (0 to cols-1)
-                  - average_flow_x (float): Average horizontal flow in this region
-                  - average_flow_y (float): Average vertical flow in this region
-                  - convergence_score (float): Convergence score between 0 and 1
-                                               0 = no inward convergence, 1 = strong inward convergence
-                  - bbox (tuple): Bounding box as (row_start, row_end, col_start, col_end)
-        
-        Example:
-            >>> analyzer = RegionAnalyzer(rows=3, cols=3)
-            >>> flow_x, flow_y, _, _ = optical_flow.compute_flow_vectors(frame1, frame2)
-            >>> convergence = analyzer.analyze_convergence(flow_x, flow_y)
-            >>> print(len(convergence))  # Should be 9 for 3x3 grid
+            list: Dictionaries containing convergence statistics for each region.
         """
         # Get the dimensions of the flow arrays
         height, width = flow_x.shape
@@ -312,6 +312,7 @@ class RegionAnalyzer:
         
         regions = []
         region_idx = 0
+        eps_flow = 1e-7
         
         # Iterate over each region in the grid
         for row in range(self.rows):
@@ -324,16 +325,12 @@ class RegionAnalyzer:
                 region_flow_y = flow_y[row_start:row_end, col_start:col_end]
                 
                 # Calculate average flow components for this region
-                average_flow_x = region_flow_x.mean()
-                average_flow_y = region_flow_y.mean()
+                average_flow_x = float(region_flow_x.mean())
+                average_flow_y = float(region_flow_y.mean())
                 
                 # Calculate the center of the region
                 region_center_y = (row_start + row_end) / 2.0
                 region_center_x = (col_start + col_end) / 2.0
-                
-                # Create a grid of pixel coordinates within the region
-                region_height = row_end - row_start
-                region_width = col_end - col_start
                 
                 # Create coordinate grids
                 y_coords, x_coords = np.meshgrid(
@@ -343,42 +340,32 @@ class RegionAnalyzer:
                 )
                 
                 # Calculate inward direction vectors (from each pixel toward region center)
-                # Vector from pixel (y, x) to center (center_y, center_x)
                 inward_y = region_center_y - y_coords
                 inward_x = region_center_x - x_coords
                 
                 # Normalize inward direction vectors
-                inward_magnitude = np.sqrt(inward_x**2 + inward_y**2)
+                inward_dist = np.sqrt(inward_x**2 + inward_y**2)
+                safe_dist = np.where(inward_dist == 0, 1.0, inward_dist)
+                u_x = np.where(inward_dist == 0, 0.0, inward_x / safe_dist)
+                u_y = np.where(inward_dist == 0, 0.0, inward_y / safe_dist)
                 
-                # Handle zero distance (center pixel itself)
-                inward_magnitude[inward_magnitude == 0] = 1.0
-                
-                inward_x_normalized = inward_x / inward_magnitude
-                inward_y_normalized = inward_y / inward_magnitude
-                
-                # Normalize flow vectors
+                # Optical flow magnitude at each pixel
                 flow_magnitude = np.sqrt(region_flow_x**2 + region_flow_y**2)
+                sum_magnitude = float(np.sum(flow_magnitude))
                 
-                # Handle zero flow vectors (no motion)
-                flow_magnitude[flow_magnitude == 0] = 1.0
-                flow_x_normalized = region_flow_x / flow_magnitude
-                flow_y_normalized = region_flow_y / flow_magnitude
-                
-                # Calculate cosine similarity between flow vectors and inward direction
-                # cos_theta = (a · b) / (||a|| * ||b||)
-                # Since both are normalized, this simplifies to dot product
-                cosine_similarity = flow_x_normalized * inward_x_normalized + flow_y_normalized * inward_y_normalized
-                
-                # Only count positive similarities (inward motion)
-                # Negative similarities indicate outward motion
-                positive_similarities = cosine_similarity[cosine_similarity > 0]
-                
-                # Calculate convergence score as the average of positive similarities
-                # If no positive similarities, score is 0
-                if len(positive_similarities) > 0:
-                    convergence_score = positive_similarities.mean()
-                else:
+                # Safe handling for zero or near-zero flow
+                if sum_magnitude < eps_flow:
                     convergence_score = 0.0
+                else:
+                    # Inward projection = dot(v, u) = v_x * u_x + v_y * u_y
+                    inward_projection = region_flow_x * u_x + region_flow_y * u_y
+                    sum_projection = float(np.sum(inward_projection))
+                    
+                    # Magnitude-weighted net inward convergence
+                    net_inward = sum_projection / (sum_magnitude + eps_flow)
+                    
+                    # Positive inward motion contributes to risk; outward motion (net < 0) yields 0
+                    convergence_score = float(np.clip(max(0.0, net_inward), 0.0, 1.0))
                 
                 # Create a region identifier
                 region_id = f"R{row}_C{col}"

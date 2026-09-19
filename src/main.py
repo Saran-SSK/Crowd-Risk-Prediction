@@ -33,6 +33,10 @@ def max_value(values):
     return float(np.max(values)) if values else 0.0
 
 
+def std_value(values):
+    return float(np.std(values)) if values else 0.0
+
+
 def format_float(value):
     return f"{float(value):.4f}"
 
@@ -70,6 +74,7 @@ def build_summary(
     regional_history,
     highest_regional_record,
     highest_risk_region_counts,
+    all_results,
 ):
     crowd_counts = [record["crowd_count"] for record in global_records]
     global_motions = [record["average_motion"] for record in global_records]
@@ -77,6 +82,41 @@ def build_summary(
     global_risk_distribution = Counter(
         record["risk_level"] for record in global_records
     )
+
+    # Global feature contributions (w_D = 0.65, w_M = 0.35)
+    # Using normalized scores stored in all_results
+    unique_frames = {}
+    for r in all_results:
+        f = r["frame"]
+        if f not in unique_frames:
+            unique_frames[f] = r
+    
+    global_d_scores = [min(max(record["crowd_count"] / 2000.0, 0.0), 1.0) for record in global_records]
+    global_m_scores = [min(max(record["average_motion"] / 0.80, 0.0), 1.0) for record in global_records]
+    mean_g_risk = mean_value(global_risks)
+    mean_g_dens_contrib = 0.65 * mean_value(global_d_scores)
+    mean_g_mot_contrib = 0.35 * mean_value(global_m_scores)
+    g_dens_pct = (mean_g_dens_contrib / mean_g_risk * 100) if mean_g_risk > 0 else 0.0
+    g_mot_pct = (mean_g_mot_contrib / mean_g_risk * 100) if mean_g_risk > 0 else 0.0
+
+    # Regional overall statistics
+    all_reg_risks = [r["risk_score"] for r in all_results]
+    all_reg_d_scores = [r["density_score"] for r in all_results]
+    all_reg_m_scores = [r["motion_score"] for r in all_results]
+    all_reg_t_scores = [r["density_trend_score"] for r in all_results]
+    all_reg_c_scores = [r["convergence_score"] for r in all_results]
+    regional_risk_distribution = Counter(r["risk_level"] for r in all_results)
+
+    mean_reg_risk = mean_value(all_reg_risks)
+    mean_reg_dens_contrib = 0.40 * mean_value(all_reg_d_scores)
+    mean_reg_mot_contrib = 0.20 * mean_value(all_reg_m_scores)
+    mean_reg_trend_contrib = 0.15 * mean_value(all_reg_t_scores)
+    mean_reg_conv_contrib = 0.25 * mean_value(all_reg_c_scores)
+    
+    reg_dens_pct = (mean_reg_dens_contrib / mean_reg_risk * 100) if mean_reg_risk > 0 else 0.0
+    reg_mot_pct = (mean_reg_mot_contrib / mean_reg_risk * 100) if mean_reg_risk > 0 else 0.0
+    reg_trend_pct = (mean_reg_trend_contrib / mean_reg_risk * 100) if mean_reg_risk > 0 else 0.0
+    reg_conv_pct = (mean_reg_conv_contrib / mean_reg_risk * 100) if mean_reg_risk > 0 else 0.0
 
     region_averages = {}
     for region_id in REGION_IDS:
@@ -88,7 +128,9 @@ def build_summary(
                 [r["density_change_ratio"] for r in records]
             ),
             "convergence": mean_value([r["convergence_score"] for r in records]),
+            "density_trend_score": mean_value([r["density_trend_score"] for r in records]),
             "risk": mean_value([r["risk_score"] for r in records]),
+            "std_risk": std_value([r["risk_score"] for r in records]),
         }
 
     highest_density_region = max(
@@ -125,13 +167,36 @@ def build_summary(
         f"Average global risk: {format_float(mean_value(global_risks))}",
         f"Minimum global risk: {format_float(min_value(global_risks))}",
         f"Maximum global risk: {format_float(max_value(global_risks))}",
+        f"Standard deviation global risk: {format_float(std_value(global_risks))}",
+        "",
+        "Global Feature Contributions (Weights: 0.65 Density, 0.35 Motion):",
+        f"  Mean Density Contribution: {format_float(mean_g_dens_contrib)} ({g_dens_pct:.2f}%)",
+        f"  Mean Motion Contribution: {format_float(mean_g_mot_contrib)} ({g_mot_pct:.2f}%)",
         "",
         "Global risk distribution:",
         f"LOW: {global_risk_distribution['LOW']}",
         f"MEDIUM: {global_risk_distribution['MEDIUM']}",
         f"HIGH: {global_risk_distribution['HIGH']}",
         "",
-        "REGIONAL STATISTICS",
+        "OVERALL REGIONAL STATISTICS (900 regional assessments)",
+        "",
+        f"Average regional risk: {format_float(mean_reg_risk)}",
+        f"Minimum regional risk: {format_float(min_value(all_reg_risks))}",
+        f"Maximum regional risk: {format_float(max_value(all_reg_risks))}",
+        f"Standard deviation regional risk: {format_float(std_value(all_reg_risks))}",
+        "",
+        "Regional Feature Contributions (Weights: 0.40 D, 0.20 M, 0.15 T, 0.25 C):",
+        f"  Mean Density Contribution (0.40*D): {format_float(mean_reg_dens_contrib)} ({reg_dens_pct:.2f}%)",
+        f"  Mean Motion Contribution (0.20*M): {format_float(mean_reg_mot_contrib)} ({reg_mot_pct:.2f}%)",
+        f"  Mean Density Trend Contribution (0.15*T): {format_float(mean_reg_trend_contrib)} ({reg_trend_pct:.2f}%)",
+        f"  Mean Convergence Contribution (0.25*C): {format_float(mean_reg_conv_contrib)} ({reg_conv_pct:.2f}%)",
+        "",
+        "Overall Regional Risk Distribution:",
+        f"LOW: {regional_risk_distribution['LOW']}",
+        f"MEDIUM: {regional_risk_distribution['MEDIUM']}",
+        f"HIGH: {regional_risk_distribution['HIGH']}",
+        "",
+        "REGION-BY-REGION STATISTICS",
         "",
     ]
 
@@ -145,9 +210,10 @@ def build_summary(
                 "",
                 f"Average density: {format_float(region_averages[region_id]['density'])}",
                 f"Average motion: {format_float(region_averages[region_id]['motion'])}",
-                f"Average density change: {format_float(region_averages[region_id]['density_change'])}",
+                f"Average density change ratio: {format_float(region_averages[region_id]['density_change'])}",
                 f"Average convergence: {format_float(region_averages[region_id]['convergence'])}",
                 f"Average risk score: {format_float(region_averages[region_id]['risk'])}",
+                f"Standard deviation risk: {format_float(region_averages[region_id]['std_risk'])}",
                 "",
                 f"LOW count: {risk_distribution['LOW']}",
                 f"MEDIUM count: {risk_distribution['MEDIUM']}",
@@ -176,7 +242,7 @@ def build_summary(
         ]
     )
 
-    return "\n".join(lines), region_averages, global_risk_distribution
+    return "\n".join(lines), region_averages, global_risk_distribution, regional_risk_distribution
 
 
 def write_summary(summary_text):
@@ -192,7 +258,13 @@ def main():
     density = DensityEstimator(model_path="models/csrnet/weights.pth")
     flow = OpticalFlowEstimator()
     region_analyzer = RegionAnalyzer(rows=3, cols=3)
-    risk = RiskAssessment()
+    risk = RiskAssessment(
+        max_density=2000.0,
+        max_motion=0.80,
+        c_region_max=800.0,
+        m_region_max=0.80,
+        trend_reference=0.05,
+    )
     visualizer = Visualizer()
 
     frame_files = sorted(
@@ -207,7 +279,7 @@ def main():
         raise ValueError("At least two frames are required for pair processing.")
 
     total_frames = len(frame_files)
-    total_pairs = min(100, len(frame_files) - 1)
+    total_pairs = len(frame_files) - 1
 
     print(f"Total frames: {total_frames}")
     print(f"Processing {total_pairs} consecutive frame pairs...")
@@ -218,6 +290,9 @@ def main():
     regional_history = {region_id: [] for region_id in REGION_IDS}
     highest_risk_region_counts = {region_id: 0 for region_id in REGION_IDS}
     highest_regional_record = None
+
+    density_map_next = None
+    crowd_count_next = None
 
     for i in range(total_pairs):
         frame1_name = frame_files[i]
@@ -233,8 +308,12 @@ def main():
             if image is None:
                 raise ValueError(f"Could not read frame: {frame1_path}")
 
-            density_map, crowd_count = density.predict(frame1_path)
-            density_map_next, _ = density.predict(frame2_path)
+            if density_map_next is None:
+                density_map, crowd_count = density.predict(frame1_path)
+            else:
+                density_map, crowd_count = density_map_next, crowd_count_next
+
+            density_map_next, crowd_count_next = density.predict(frame2_path)
 
             heatmap = density.create_heatmap(density_map)
             heatmap = cv2.resize(heatmap, (image.shape[1], image.shape[0]))
@@ -339,13 +418,14 @@ def main():
             raise
 
     write_results_csv(all_results)
-    summary_text, region_averages, global_risk_distribution = build_summary(
+    summary_text, region_averages, global_risk_distribution, regional_risk_distribution = build_summary(
         total_frames,
         total_pairs,
         global_records,
         regional_history,
         highest_regional_record,
         highest_risk_region_counts,
+        all_results,
     )
     write_summary(summary_text)
 
@@ -367,71 +447,7 @@ def main():
     )
 
     print()
-    print("========================================")
-    print("FULL PROCESSING COMPLETE")
-    print("========================================")
-    print()
-    print(f"Frame pairs processed: {total_pairs}")
-    print()
-    print(f"Results CSV:\n{RESULTS_CSV}")
-    print()
-    print(f"Summary:\n{SUMMARY_TXT}")
-    print()
-    print(f"Output frames:\n{OUTPUT_FOLDER}/")
-    print()
-    print("Final global statistics:")
-    print(f"Average crowd count: {format_float(mean_value(crowd_counts))}")
-    print(f"Minimum crowd count: {format_float(min_value(crowd_counts))}")
-    print(f"Maximum crowd count: {format_float(max_value(crowd_counts))}")
-    print(f"Average motion: {format_float(mean_value(global_motions))}")
-    print(f"Minimum motion: {format_float(min_value(global_motions))}")
-    print(f"Maximum motion: {format_float(max_value(global_motions))}")
-    print(f"Average global risk: {format_float(mean_value(global_risks))}")
-    print(f"Minimum global risk: {format_float(min_value(global_risks))}")
-    print(f"Maximum global risk: {format_float(max_value(global_risks))}")
-    print()
-    print("Global risk distribution:")
-    print(f"LOW: {global_risk_distribution['LOW']}")
-    print(f"MEDIUM: {global_risk_distribution['MEDIUM']}")
-    print(f"HIGH: {global_risk_distribution['HIGH']}")
-    print()
-    print("Final regional statistics:")
-    for region_id in REGION_IDS:
-        risk_distribution = Counter(
-            record["risk_level"] for record in regional_history[region_id]
-        )
-        print(
-            f"{region_id}: "
-            f"avg density={region_averages[region_id]['density']:.4f}, "
-            f"avg motion={region_averages[region_id]['motion']:.4f}, "
-            f"avg density change={region_averages[region_id]['density_change']:.4f}, "
-            f"avg convergence={region_averages[region_id]['convergence']:.4f}, "
-            f"avg risk={region_averages[region_id]['risk']:.4f}, "
-            f"LOW={risk_distribution['LOW']}, "
-            f"MEDIUM={risk_distribution['MEDIUM']}, "
-            f"HIGH={risk_distribution['HIGH']}"
-        )
-    print()
-    print("Highest-risk frame/region:")
-    print(f"Frame: {highest_regional_record['frame']}")
-    print(f"Region: {highest_regional_record['region_id']}")
-    print(f"Risk score: {format_float(highest_regional_record['risk_score'])}")
-    print(f"Risk level: {highest_regional_record['risk_level']}")
-    print()
-    print(f"Highest-density region: {highest_density_region}")
-    print(
-        f"Average density: {format_float(region_averages[highest_density_region]['density'])}"
-    )
-    print(f"Highest-motion region: {highest_motion_region}")
-    print(
-        f"Average motion: {format_float(region_averages[highest_motion_region]['motion'])}"
-    )
-    print(f"Highest-convergence region: {highest_convergence_region}")
-    print(
-        "Average convergence: "
-        f"{format_float(region_averages[highest_convergence_region]['convergence'])}"
-    )
-    print(f"Most frequently highest-risk region: {most_frequent_highest_risk_region}")
+    print(summary_text)
 
 
 if __name__ == "__main__":
